@@ -7,7 +7,7 @@ def title_string():
     index = random.randint(0, len(TITLE_STRINGS)-1)
     return TITLE_STRINGS[index]
 
-HEAL_STRINGS=['schel hesp', 'schel kaas', 'smartie', 'ui', 'ajuin'] # Names for healing items
+HEAL_STRINGS=['schel hesp', 'schel kaas', 'smartie', 'ui', 'ajuin', 'brioche'] # Names for healing items
 def heal_string():
     index = random.randint(0, len(HEAL_STRINGS)-1)
     return HEAL_STRINGS[index]
