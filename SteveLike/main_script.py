@@ -4,6 +4,8 @@
 # Made possible with the roguelike tutorial on roguebasin by Jotaf
 # Many thanks and praises to you good sir!
 
+#Woopwoopwoop
+
 import libtcodpy as libtcod
 import math
 import textwrap
@@ -648,7 +650,7 @@ def create_h_tunnel(x1, x2, y):
     for x in range(min(x1, x2), max(x1, x2) + 1):
         map[x][y].blocked = False
         map[x][y].block_sight = False
- 
+
 def create_v_tunnel(y1, y2, x):
     global map
     #vertical tunnel
@@ -1602,13 +1604,13 @@ def player_death(player):
     player.color = libtcod.dark_red
  
 def monster_death(monster):
+    drop = create_money(monster.fighter.money_amount, monster.x, monster.y)
+    objects.append(drop)
     #transform it into a nasty corpse! it doesn't block, can't be
     #attacked and doesn't move
     message('The ' + monster.name + ' is dead! You gain ' + str(monster.fighter.xp) + ' experience points.', libtcod.orange)
     monster.char = '%'
     monster.color = libtcod.dark_red
-    drop = create_money(monster.fighter.money_amount, monster.x, monster.y)
-    objects.append(drop)
     monster.blocks = False
     monster.fighter = None
     monster.ai = None
