@@ -664,7 +664,10 @@ class Chest:
         return self.content[index-1]
     
     def clone(self):
-        return Chest(self.content)
+        cloned_list = []
+        for object in self.content:
+            cloned_list.append(object.clone())
+        return Chest(cloned_list)
 
 
 def create_money(amount, x=0, y=0):
