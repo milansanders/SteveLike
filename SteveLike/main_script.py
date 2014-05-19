@@ -1,4 +1,4 @@
-# Robins great adventure.
+# Robin's great adventure.
 # A game by Xenoxinius (Idea, humor and such) & Melinator95 (programming, keeping it real and do-able)
 #
 # Made possible with the roguelike tutorial on roguebasin by Jotaf
@@ -101,7 +101,9 @@ class Rect:
 class Object:
     #this is a generic object: the player, a monster, an item, the stairs...
     #it's always represented by a character on screen.
-    def __init__(self, x, y, char, name, color, blocks=False, always_visible=False, fighter=None, ai=None, item=None, equipment=None, spell=None, stackable=None):
+    def __init__(self, x, y, char, name, color, blocks=False, always_visible=False,
+                 fighter=None, ai=None, item=None, equipment=None, spell=None, stackable=None,
+                 chest=None):
         self.x = x
         self.y = y
         self.char = char
@@ -138,6 +140,10 @@ class Object:
         self.stackable = stackable
         if self.stackable:  #let the Stackable component know who owns it
             self.stackable.owner = self
+        
+        self.chest = chest
+        if self.chest:  #let the Chest component know who owns it
+            self.chest.owner = self
  
     @property
     def full_name(self):
@@ -193,7 +199,30 @@ class Object:
         #erase the character that represents this object
         if libtcod.map_is_in_fov(fov_map, self.x, self.y):
             libtcod.console_put_char_ex(con, self.x, self.y, '.', color_light_ground, libtcod.black)
- 
+    
+    #Recursive cloning method. Don't know why, but it'll work and be easier
+    def clone(self):
+        fighter = None
+        if self.fighter:
+            fighter = self.fighter.clone()
+        item = None
+        if self.item:
+            item = self.item.clone()
+        equipment = None
+        if self.equipment:
+            equipment = self.equipment.clone()
+        spell = None
+        if self.spell:
+            spell = self.spell.clone()
+        stackable = None
+        if self.stackable:
+            stackable = self.stackable.clone()
+        chest = None
+        if self.chest:
+            chest = self.chest.clone()
+        return Object(self.x, self.y, self.char, self.name, self.color, self.blocks, self.always_visible,
+                 fighter, self.ai, item, equipment, spell, stackable,
+                 chest)
  
 class Fighter:
     #combat-related properties and methods (monster, player, NPC).
@@ -252,9 +281,7 @@ class Fighter:
         damage = self.power - target.fighter.defense
         
         dodge_dice = libtcod.random_get_int(0, 1, 100)
-        print "dodge dice: "+str(dodge_dice)
         crit_dice = libtcod.random_get_int(0, 1, 100)
-        print "crit dice: "+str(crit_dice)
         if (crit_dice > self.crit_chance):
             damage = int(damage * (self.crit_dmg // 100))
         if (dodge_dice > target.fighter.dodge):
@@ -296,6 +323,10 @@ class Fighter:
         self.mp += amount
         if self.mp > self.max_mp:
             self.mp = self.max_mp
+    
+    def clone(self):
+        return Fighter(self.hp, self.defense, self.power, self.xp, self.money_amount,
+                       self.mp, self.dodge, self.crit_chance, self.crit_dmg, self.death_function, self.player_class)
             
 class BasicMonster:
     #AI for a basic monster.
@@ -399,7 +430,6 @@ class Item:
     def use(self):
         #special case: if the object has the Equipment component, the "use" action is to equip/dequip
         if self.owner.equipment:
-            print "toggling equip"
             self.owner.equipment.toggle_equip()
             return
         
@@ -417,6 +447,9 @@ class Item:
                     inventory.remove(self.owner)  #destroy after use, unless it was cancelled for some reason
                 else:
                     self.owner.stackable.spend(inventory)
+        
+    def clone(self):
+        return Item(self.pickup_line, self.use_function, self.shop_cost)
  
 class Equipment:
     #an object that can be equipped, yielding bonuses. automatically adds the Item component.
@@ -446,18 +479,14 @@ class Equipment:
  
     def equip(self):
         global game_state
-        print "slot to equip: "+self.slot
         if self.slot != 'left hand' and self.slot != 'right hand' and self.slot != 'both hands': #other
             #if the slot is already being used, dequip whatever is there first
-            print "not hands"
             old_equipment = get_equipped_in_slot(self.slot)
             if old_equipment is not None:
                 
-                print 'dequipping...'
                 old_equipment.dequip()
         
         elif self.slot == 'both hands': #2handed
-            print "both hands"
             old_equipment = [get_equipped_in_slot('both hands')]
             if old_equipment[0] == None: #No 2 handed equipped, looking further
                 old_equipment = [get_equipped_in_slot('left hand')]
@@ -466,7 +495,6 @@ class Equipment:
                 else: #A lefthanded weapon is equipped
                     if get_equipped_in_slot('right hand') != None: #Both hands are full
                         old_equipment.append(get_equipped_in_slot('right hand'))
-            print old_equipment
             if old_equipment[0] is not None:
                 for thing in old_equipment:
                     thing.dequip()
@@ -475,7 +503,6 @@ class Equipment:
             old_equipment = get_equipped_in_slot('both hands')
             if old_equipment == None:
                 old_equipment = get_equipped_in_slot(self.slot)
-                print 'old = one handed'
             if old_equipment is not None:
                 old_equipment.dequip()
                 
@@ -485,7 +512,6 @@ class Equipment:
         
         #Enter ranged mode if kind is ranged
         if self.kind == 'ranged':
-            print "entering ranged_mode"
             game_state='ranged'
  
     def dequip(self):
@@ -498,8 +524,12 @@ class Equipment:
         
         #Leaving ranged mode if previously in it
         if game_state == 'ranged' and self.kind == 'ranged':
-            print "leaving ranged mode"
             game_state = 'playing'
+    
+    def clone(self):
+        return Equipment(self.slot, self.kind, self.type, self.range, self.ranged_damage,
+                 self.power_bonus, self.defense_bonus, self.max_hp_bonus, self.max_mp_bonus,
+                 self.dodge_bonus, self.crit_chance_bonus, self.crit_dmg_bonus)
 
 class Spell:
     #A spell is put in the spellbook and obtained through books
@@ -529,8 +559,6 @@ class Spell:
         message('You dropped the page containing ' + self.owner.name + '.', libtcod.yellow)
     
     def use(self):
-        print self.cost
-        print player.fighter.mp
         if self.cost <= player.fighter.mp:
             self.cast()
             player.fighter.mp -= self.cost
@@ -538,6 +566,9 @@ class Spell:
         else:
             message("You don't have enough mana to cast this", libtcod.red)
             return False
+    
+    def clone(self):
+        return Spell(self.cast, self.cost, self.pickup_line)
 
 class Stackable:
     #Stackable items can be placed on top of each other and only use 1 inv slot.
@@ -563,11 +594,8 @@ class Stackable:
     
     def spend(self, container):
         #Spend 1 item from the stack, deleting it if necessary
-        print "amount before spend: " + str(self.amount)
         self.amount -= 1
-        print "amount after spend: " + str(self.amount)
         if self.amount <= 0:
-            print "all gone: removing from: " + str(container)
             if self.owner.equipment and self.owner.equipment.is_equipped:
                 self.owner.equipment.dequip()
             container.remove(self.owner)
@@ -576,19 +604,65 @@ class Stackable:
     
     def add(self, container):
         #Adds a new stack to a list or otherwise add to existing stack
-        print "checking container for existing stack"
         found = False
         for thing in container:
             if thing.stackable and thing.name == self.owner.name and not found:
-                print "found one"
                 thing.stackable.amount += 1
                 found =True
         
         if not found:
-            print "none found, adding new item"
             new_item = Object(self.owner.x, self.owner.y, self.owner.char, self.owner.name, self.owner.color,
                               self.owner.blocks, self.owner.always_visible, item=self.owner.item, stackable=Stackable())
             container.append(new_item)
+    
+    def clone(self):
+        return Stackable(self.amount)
+
+class Chest:
+    #A chest contains loot and is opened when bumped against.
+    def __init__(self, content=[]):
+        self.content = content
+    
+    def open(self):
+        global objects
+        chosen_item = self.chest_menu("Ooh, loot!")
+        if chosen_item == True:
+            message("The items jumped out of the chest")
+            things = self.content
+            self.content = []
+            objects += things
+            for thing in things:
+                thing.item.pick_up()
+        elif chosen_item != None:
+            self.content.remove(chosen_item)
+            message("The item jumped out of the chest.")
+            objects.append(chosen_item)
+            chosen_item.item.pick_up()
+            
+            
+    
+    def chest_menu(self, header):
+        #show a menu with each item of the chest as an option
+        if len(self.content) == 0:
+            options = ['The chest is empty.']
+        else:
+            options = ['Take all']
+            for item in self.content:
+                text = item.name
+                #show additional information, in case it's stackable
+                if item.stackable:
+                    text = text + ' (' + str(item.stackable.amount) + ')'
+                options.append(text)
+     
+        index = menu(header, options, INVENTORY_WIDTH)
+     
+        #if an item was chosen, return it
+        if index is None or len(self.content) == 0: return None
+        if index == 0: return True #Take all
+        return self.content[index-1]
+    
+    def clone(self):
+        return Chest(self.content)
 
 
 def create_money(amount, x=0, y=0):
@@ -601,7 +675,6 @@ def create_money(amount, x=0, y=0):
 def get_equipped_in_slot(slot):  #returns the equipment in a slot, or None if it's empty
     for obj in inventory:
         if obj.equipment and obj.equipment.slot == slot and obj.equipment.is_equipped:
-            print obj.name+" in slot: "+slot
             return obj.equipment
     return None
 
@@ -755,6 +828,13 @@ def make_map():
         (merch_x, merch_y) = merch_room.center()
         merchant = Object(merch_x, merch_y, '@', 'merchant', libtcod.gold, always_visible=True, blocks=True)
         objects.append(merchant)
+    
+#     ##CREATE CHEST
+#     chest_item_item_component = Item()
+#     chest_item = Object(0, 0, 'I', 'item', libtcod.gold, always_visible=True, item=chest_item_item_component)
+#     chest_component = Chest([chest_item, chest_item.clone()])
+#     chest = Object(rooms[0].center()[0]+1, rooms[0].center()[1], 'D', 'Chest', libtcod.purple, blocks=True, always_visible=True, chest=chest_component)
+#     objects.append(chest)
  
 def random_choice_index(chances):  #choose one option from list of chances, returning its index
     #the dice will land on some number between 1 and the sum of the chances
@@ -1123,6 +1203,10 @@ def player_move_or_attack(dx, dy):
     elif (x, y) == (merchant.x, merchant.y):
         message(String.npc_bump())
         return False
+    for object in objects:
+        if object.chest and (x,y) == (object.x, object.y):
+            object.chest.open()
+            return False
     else:
         message(String.wall_bump())
         return False
@@ -1375,9 +1459,7 @@ def handle_keys():
 
             if key_char == 'k': #Kopen
                 #Check if near shop and buy things
-                print 'checking for shops'
                 if (-1 <= player.x-merchant.x <= 1) and (-1 <= player.y-merchant.y <= 1):
-                    print 'shopping'
                     chosen_item = shop_menu('Welcome to my humble shop...')
                     if chosen_item != None:
                         if not chosen_item.stackable:
@@ -1385,8 +1467,7 @@ def handle_keys():
                             objects.append(chosen_item)
                         else:
                             catalog[catalog.index(chosen_item)].stackable.spend(catalog)
-                            new_item=Object(chosen_item.x, chosen_item.y, chosen_item.char, chosen_item.name, chosen_item.color,
-                                            always_visible=True, item=chosen_item.item, stackable=Stackable())
+                            new_item=chosen_item.clone(); new_item.stackable.amount = 1
                             chosen_item = new_item
                             objects.append(chosen_item)
                         message('The merchant threw the ' + chosen_item.name + ' at your feet.', libtcod.gold)
@@ -1395,7 +1476,6 @@ def handle_keys():
             if key_char == 'v': #Verkopen
                 #Check if near shop and sell things
                 if (-1 <= player.x-merchant.x <= 1) and (-1 <= player.y-merchant.y <= 1):
-                    print 'selling'
                     chosen_item = shop_sell_menu('Select an item to sell.')
                     if chosen_item != None:
                         spend_player_money(-chosen_item.item.shop_cost/2)
@@ -1448,7 +1528,6 @@ def handle_ranged_keys():
             pass  #do nothing ie wait for the monster to come to you
         elif (mouse.lbutton_pressed and libtcod.map_is_in_fov(fov_map, x, y) and
                     (player.distance(x, y) <= get_bow().equipment.range)):
-            print 'shooting ('+str(x)+','+str(y)+')...'
             if not shoot(x,y): #Shoot @ target tile w/ equipped arrows through equipped ranged weapon
                 return 'didnt-take-turn'
         
@@ -1518,9 +1597,7 @@ def handle_ranged_keys():
         
             if key_char == 'k': #Kopen
                 #Check if near shop and buy things
-                print 'checking for shops'
                 if (-1 <= player.x-merchant.x <= 1) and (-1 <= player.y-merchant.y <= 1):
-                    print 'shopping'
                     chosen_item = shop_menu('Welcome to my humble shop...')
                     if chosen_item != None:
                         if not chosen_item.stackable:
@@ -1528,8 +1605,7 @@ def handle_ranged_keys():
                             objects.append(chosen_item)
                         else:
                             catalog[catalog.index(chosen_item)].stackable.spend(catalog)
-                            new_item=Object(chosen_item.x, chosen_item.y, chosen_item.char, chosen_item.name, chosen_item.color,
-                                            always_visible=True, item=chosen_item.item, stackable=Stackable())
+                            new_item=chosen_item.clone(); new_item.stackable.amount = 1
                             chosen_item = new_item
                             objects.append(chosen_item)
                         message('The merchant threw the ' + chosen_item.name + ' at your feet.', libtcod.gold)
@@ -1538,7 +1614,6 @@ def handle_ranged_keys():
             if key_char == 'v': #Verkopen
                 #Check if near shop and sell things
                 if (-1 <= player.x-merchant.x <= 1) and (-1 <= player.y-merchant.y <= 1):
-                    print 'selling'
                     chosen_item = shop_sell_menu('Select an item to sell.')
                     if chosen_item != None:
                         spend_player_money(-chosen_item.item.shop_cost/2)
@@ -1628,7 +1703,6 @@ def boss_death(boss):
     boss.name = 'remains of ' + boss.name
     boss.send_to_back()
     #create stairs at the center of the last room
-    #DEBUG# print "creating stairs on: ("+str(stair_x)+","+str(stair_y)+")"
     stairs = Object(stair_x, stair_y, '<', 'stairs', libtcod.white, always_visible=True)
     objects.append(stairs)
     stairs.send_to_back()  #so it's drawn below the monsters
@@ -1812,11 +1886,13 @@ def save_game():
     file['game_msgs'] = game_msgs
     file['game_state'] = game_state
     file['dungeon_level'] = dungeon_level
+    file['palette'] = (color_dark_wall, color_light_wall, color_dark_ground, color_light_ground)
     file.close()
  
 def load_game():
     #open the previously saved shelve and load the game data
     global map, objects, player, merchant, stairs, inventory, catalog, spellbook, game_msgs, game_state, dungeon_level
+    global color_dark_wall, color_light_wall, color_dark_ground, color_light_ground
  
     file = shelve.open('savegame', 'r')
     map = file['map']
@@ -1830,6 +1906,7 @@ def load_game():
     game_msgs = file['game_msgs']
     game_state = file['game_state']
     dungeon_level = file['dungeon_level']
+    (color_dark_wall, color_light_wall, color_dark_ground, color_light_ground) = file['palette']
     file.close()
  
     initialize_fov()
@@ -2051,6 +2128,11 @@ def next_level():
         message("Wow, didn't know plants could grow down here!", libtcod.green)
         color_light_floor = libtcod.darker_lime
         color_light_wall = libtcod.darker_green
+    
+    if dungeon_level == 5: #The prison
+        message("You hear wailing in the distance...", libtcod.darker_grey)
+        color_light_floor = libtcod.darkest_grey
+        color_light_wall = libtcod.darker_grey
     
     make_map()  #create a fresh new level!
     initialize_fov()
