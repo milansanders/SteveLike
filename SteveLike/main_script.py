@@ -4,6 +4,8 @@
 # Made possible with the roguelike tutorial on roguebasin by Jotaf
 # Many thanks and praises to you good sir!
 
+#test
+
 import libtcodpy as libtcod
 import math
 import textwrap
