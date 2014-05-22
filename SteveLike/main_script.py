@@ -105,7 +105,7 @@ class Object:
     #it's always represented by a character on screen.
     def __init__(self, x, y, char, name, color, blocks=False, always_visible=False,
                  fighter=None, ai=None, item=None, equipment=None, spell=None, stackable=None,
-                 chest=None):
+                 chest=None, trap=None):
         self.x = x
         self.y = y
         self.char = char
@@ -146,6 +146,10 @@ class Object:
         self.chest = chest
         if self.chest:  #let the Chest component know who owns it
             self.chest.owner = self
+        
+        self.trap = trap
+        if self.trap:  #let the Trap component know who owns it
+            self.trap.owner = self
  
     @property
     def full_name(self):
@@ -160,6 +164,11 @@ class Object:
         if not is_blocked(self.x + dx, self.y + dy):
             self.x += dx
             self.y += dy
+            for object in objects:
+                if object.trap and (self.x, self.y) == (object.x, object.y):
+                    object.trap.spring(self)
+            return True;
+        return False;
  
     def move_towards(self, target_x, target_y):
         #vector from this object to the target, and distance
@@ -167,6 +176,18 @@ class Object:
         dy = target_y - self.y
         distance = math.sqrt(dx ** 2 + dy ** 2)
  
+        #normalize it to length 1 (preserving direction), then round it and
+        #convert to integer so the movement is restricted to the map grid
+        dx = int(round(dx / distance))
+        dy = int(round(dy / distance))
+        self.move(dx, dy)
+        
+    def move_away(self, target_x, target_y):
+        #Vector from the target to self and the distance
+        dx = -(target_x - self.x)
+        dy = -(target_y - self.y)
+        distance = math.sqrt(dx ** 2 + dy ** 2)
+        
         #normalize it to length 1 (preserving direction), then round it and
         #convert to integer so the movement is restricted to the map grid
         dx = int(round(dx / distance))
@@ -194,7 +215,13 @@ class Object:
         if (libtcod.map_is_in_fov(fov_map, self.x, self.y) or
                 (self.always_visible and map[self.x][self.y].explored)):
             #set the color and then draw the character that represents this object at its position
-            libtcod.console_set_default_foreground(con, self.color)
+            color = self.color
+            if color == None: #It's a trap!
+                if libtcod.map_is_in_fov(fov_map, self.x, self.y):
+                    color = color_light_ground
+                else:
+                    color = color_dark_ground
+            libtcod.console_set_default_foreground(con, color)
             libtcod.console_put_char(con, self.x, self.y, self.char, libtcod.BKGND_NONE)
  
     def clear(self):
@@ -242,6 +269,7 @@ class Fighter:
         self.base_crit_dmg = crit_dmg #dmg=power*(crit_dmg/100)
         self.money_amount = money_amount
         self.player_class = player_class
+        self.passives = []
  
     @property
     def power(self):  #return actual power, by summing up the bonuses from all equipped items
@@ -326,9 +354,14 @@ class Fighter:
         if self.mp > self.max_mp:
             self.mp = self.max_mp
     
+    def do_passives(self):
+        for passive in self.passives:
+            passive.do_passive() #Only passives in the list and passives always have do_passive
+    
     def clone(self):
         return Fighter(self.hp, self.defense, self.power, self.xp, self.money_amount,
-                       self.mp, self.dodge, self.crit_chance, self.crit_dmg, self.death_function, self.player_class)
+                       self.mp, self.dodge, self.crit_chance, self.crit_dmg, self.death_function,
+                       self.player_class, [passive.clone() for passive in self.passives])
             
 class BasicMonster:
     #AI for a basic monster.
@@ -389,6 +422,12 @@ class RangedMonster:
             #move towards player if far away or away if too close
             if monster.distance_to(player) >= (self.range+1):
                 monster.move_towards(player.x, player.y)
+            elif monster.distance_to(player) <= (self.range-1):
+                #stay away!
+                if not monster.move_away(player.x, player.y):
+                    #Oh noes, nowhere to run! Attack! (if the player is still alive.)
+                    if player.fighter.hp > 0:
+                        monster.fighter.attack(player)
  
             #close enough, attack! (if the player is still alive.)
             elif player.fighter.hp > 0:
@@ -641,7 +680,25 @@ class Chest:
             objects.append(chosen_item)
             chosen_item.item.pick_up()
             
-            
+class Trap:
+    def __init__(self, effect, one_time=True):
+        self.effect = effect
+        if one_time:
+            self.sprung = False
+        else:
+            self.sprung = None
+    
+    def spring(self, target):
+        if not self.sprung: #None also gives false
+            if target.fighter:
+                if isinstance(self.effect, Passive):
+                    self.effect.owner = target
+                    target.fighter.passives.append(self.effect)
+                    message("The trap sprung and "+str(target.name)+" is now "+self.effect.passive_name+".")
+                else:
+                    target.fighter.take_damage(self.effect)
+                    message("The trap sprung and dealt "+str(self.effect)+" damage to "+target.name+".")
+                if (self.sprung != None): self.sprung = True
     
     def chest_menu(self, header):
         #show a menu with each item of the chest as an option
@@ -668,6 +725,28 @@ class Chest:
         for object in self.content:
             cloned_list.append(object.clone())
         return Chest(cloned_list)
+
+class Passive:
+    pass #common Passive class, has nothing specific
+
+# A poison object that handles DOT when triggered.
+# @param owner: The Object that owns this passive
+class Passive_Poison(Passive):
+    def __init__(self, nb_turns, dmg, owner):
+        self.turns = nb_turns
+        self.current_turns = 0
+        self.dmg = dmg
+        self.passive_name = "poisoned"
+        self.owner = owner
+    
+    def do_passive(self):
+        if self.current_turns < self.turns:
+            self.current_turns += 1
+            self.owner.fighter.take_damage(self.dmg)
+            message(self.owner.name.capitalize()+" gets hit for "+str(self.dmg)+" by the poison.", libtcod.darker_green)
+        elif self.current_turns == self.turns:
+            message("The poison has subsided", libtcod.darker_green)
+            self.current_turns += 1
 
 
 def create_money(amount, x=0, y=0):
@@ -878,7 +957,7 @@ def place_objects(room):
  
     #chance of each monster
     monster_chances = {}
-    monster_chances['orc'] = 80  #orc always shows up, even if all other monsters have 0 chance
+    monster_chances['orc'] = 8000  #orc always shows up, even if all other monsters have 0 chance
     monster_chances['archer'] = 10
     monster_chances['troll'] = from_dungeon_level([[15, 3], [30, 5], [60, 7]])
  
@@ -887,6 +966,9 @@ def place_objects(room):
  
     #chance of each item (by default they have a chance of 0 at level 1, which then goes up)
     item_chances = {}
+    
+    #Traps
+    item_chances['poison_trap'] = 8000
     
     #Potions
     item_chances['heal'] = 35  #healing potion always shows up, even if all other items have 0 chance
@@ -957,6 +1039,13 @@ def place_objects(room):
         #only place it if the tile is not blocked
         if not is_blocked(x, y):
             choice = random_choice(item_chances)
+            
+            #Traps
+            if choice == 'poison_trap':
+                #create a poison trap
+                trap_effect = Passive_Poison(3,4,None)
+                trap_component = Trap(trap_effect)
+                item = Object(x, y, ',', 'poison trap', None, trap=trap_component)
             
             #Potions
             if choice == 'heal':
@@ -1196,6 +1285,7 @@ def player_move_or_attack(dx, dy):
     #attack if target found, move otherwise
     if target is not None:
         player.fighter.attack(target)
+        player.fighter.do_passives()
         return True
     elif not is_blocked(x,y):
         player.move(dx, dy)
@@ -1204,6 +1294,7 @@ def player_move_or_attack(dx, dy):
             if object.name == 'money' and object.x==player.x and object.y==player.y:
                 object.item.pick_up()
         fov_recompute = True
+        player.fighter.do_passives()
         return True
     elif (x, y) == (merchant.x, merchant.y):
         message(String.npc_bump())
@@ -1397,6 +1488,7 @@ def handle_keys():
             if not player_move_or_attack(1, 1):
                 return 'didnt-take-turn'
         elif key.vk == libtcod.KEY_KP5:
+            player.fighter.do_passives()
             pass  #do nothing ie wait for the monster to come to you
         else:
             #test for other keys
@@ -1530,6 +1622,7 @@ def handle_ranged_keys():
             if not player_move_or_attack(1, 1):
                 return 'didnt-take-turn'
         elif key.vk == libtcod.KEY_KP5:
+            player.fighter.do_passives()
             pass  #do nothing ie wait for the monster to come to you
         elif (mouse.lbutton_pressed and libtcod.map_is_in_fov(fov_map, x, y) and
                     (player.distance(x, y) <= get_bow().equipment.range)):
@@ -1871,6 +1964,7 @@ def shoot(x, y):
         
     for obj in objects:
         if obj.x == x and obj.y == y and obj.fighter and obj != player:
+            player.fighter.do_passives()
             message('you shoot the ' + obj.name + ' and he gets hit for ' + str(damage) + ' hit points.')
             obj.fighter.take_damage(damage)
             return True
@@ -2084,9 +2178,10 @@ def new_game():
     
     #create object representing the player
     fighter_component = Fighter(hp=class_hp, defense=class_defense, power=class_power, xp=0, mp=class_mp, dodge=class_dodge,
-                                crit_chance=class_crit_chance, crit_dmg=class_crit_dmg, death_function=player_death, player_class=player_class_name)
+                                crit_chance=class_crit_chance, crit_dmg=class_crit_dmg, death_function=player_death, player_class=player_class_name, 
+                                )
     player = Object(0, 0, '@', player_name, libtcod.white, blocks=True, fighter=fighter_component)
- 
+
     player.level = 1
  
     #generate map (at this point it's not drawn to the screen)
@@ -2198,6 +2293,8 @@ def  play_game():
         if (game_state == 'playing' or game_state == 'ranged') and player_action != 'didnt-take-turn':
             for object in objects:
                 if object.ai:
+                    if object.fighter:
+                        object.fighter.do_passives()
                     object.ai.take_turn()
  
 def main_menu():
