@@ -11,7 +11,7 @@ import math
 import textwrap
 import shelve
 import time
-import String
+import random
 
 
 #actual size of the window
@@ -69,6 +69,9 @@ color_light_ground = libtcod.Color(200, 180, 50)
 #Here be stairs before boss death
 stair_x = -1
 stair_y = -1
+
+#The number of the final floor.
+FINAL_FLOOR_LEVEL=7
  
 class Tile:
     #a tile of the map and its properties
@@ -160,6 +163,10 @@ class Object:
         return output
     
     def move(self, dx, dy):
+        #If a fighter and if not can move: return True
+        if self.fighter:
+            if not self.fighter.can_move:
+                return True
         #move by the given amount, if the destination is not blocked
         if not is_blocked(self.x + dx, self.y + dy):
             self.x += dx
@@ -199,6 +206,11 @@ class Object:
         dx = other.x - self.x
         dy = other.y - self.y
         return math.sqrt(dx ** 2 + dy ** 2)
+    
+    def move_distance_to(self, other):
+        dx = abs(other.x - self.x)
+        dy = abs(other.y - self.y)
+        return max(dx,dy)
  
     def distance(self, x, y):
         #return the distance to some coordinates
@@ -270,6 +282,7 @@ class Fighter:
         self.money_amount = money_amount
         self.player_class = player_class
         self.passives = []
+        self.can_move = True
  
     @property
     def power(self):  #return actual power, by summing up the bonuses from all equipped items
@@ -357,6 +370,21 @@ class Fighter:
     def do_passives(self):
         for passive in self.passives:
             passive.do_passive() #Only passives in the list and passives always have do_passive
+            if passive.terminate:
+                self.passives.remove(passive)
+    
+    def add_passive(self, effect):
+        if isinstance(effect, Passive_Poison):
+            for passive in self.passives:
+                if isinstance(passive, Passive_Poison):
+                    return
+            self.passives.append(effect)
+        
+        elif isinstance(effect, Passive_Stun):
+            for passive in self.passives:
+                if isinstance(passive, Passive_Stun):
+                    return
+            self.passives.append(effect)
     
     def clone(self):
         return Fighter(self.hp, self.defense, self.power, self.xp, self.money_amount,
@@ -432,7 +460,65 @@ class RangedMonster:
             #close enough, attack! (if the player is still alive.)
             elif player.fighter.hp > 0:
                 monster.fighter.attack(player)
-    
+
+class LisanneAI:
+    #AI for lisanne
+    def take_turn(self):
+        global final_boss_state
+        #Lisanne can be in one of 2 states. Melee or ranged.
+        #When in melee, she walks close and either just attacks or blows you, which heals you, but also stuns you for the next turn.
+        #When in ranged mode she can flash, which stuns you for 2 turns or she can damage you from afar by poisoning you with her foul mouth (8-10dmg for 2-3 turns).
+        #She stays in one mode until use of power. chances for special attack is 10%.
+        #Ranged distance is 2 squares.
+        L = self.owner
+        if libtcod.map_is_in_fov(fov_map, L.x, L.y): #Same deal for aggro.
+            if final_boss_state == 0: #melee
+                if L.move_distance_to(player) == 1: #In range
+                    if libtcod.random_get_int(0, 1, 10)==10: #Use special attack
+                        message("Ze peep je!", libtcod.dark_red)
+                        message("You feel invigorated.")
+                        player.fighter.heal(5)
+                        effect = Passive_Stun(2, player)
+                        player.fighter.add_passive(effect)
+                        final_boss_state=1
+                    else:
+                        message("Lisanne krabt in je gezicht.", libtcod.dark_red)
+                        message("Niet mijn gezicht!", libtcod.sky)
+                        L.fighter.attack(player)
+                else:
+                    L.move_towards(player.x, player.y) #Move within range
+                    
+            elif final_boss_state == 1: #ranged
+                attack = True
+                dist = L.move_distance_to(player)
+                if dist > 2:
+                    L.move_towards(player.x, player.y)
+                    attack = False
+                elif dist < 2:
+                    if L.move_away(player.x, player.y): attack = False
+                if attack == True:
+                    attack_type = libtcod.random_get_int(0, 1, 10)
+                    if attack_type==10: #flash
+                        message("Lisanne ziet het nut niet in van kleding", libtcod.dark_red)
+                        message("Hooow borsten!", libtcod.sky)
+                        effect = Passive_Stun(1, player)
+                        player.fighter.add_passive(effect)
+                        final_boss_state=0
+                    elif attack_type==9: #poison words
+                        message("De vuile feeks vergiftigd je met haar giftige woorden.", libtcod.dark_red)
+                        effect = Passive_Poison(2, libtcod.random_get_int(0, 8, 9), player)
+                        player.fighter.add_passive(effect)
+                        final_boss_state=0
+                    else:
+                        message("Lisanne speekt in je gezicht.", libtcod.dark_red)
+                        message("Niet mijn gezicht!", libtcod.sky)
+                        L.fighter.attack(player)
+                    
+            
+            else: #ERROR
+                message("Lisanne is confused, she forgets who she is. Exiting game because fuck your victory.")
+                assert (0 <= final_boss_state <= 1)
+
  
 class Item:
     #an item that can be picked up and used.
@@ -727,7 +813,7 @@ class Trap:
         return Chest(cloned_list)
 
 class Passive:
-    pass #common Passive class, has nothing specific
+    pass
 
 # A poison object that handles DOT when triggered.
 # @param owner: The Object that owns this passive
@@ -738,6 +824,7 @@ class Passive_Poison(Passive):
         self.dmg = dmg
         self.passive_name = "poisoned"
         self.owner = owner
+        self.terminate = False
     
     def do_passive(self):
         if self.current_turns < self.turns:
@@ -746,6 +833,26 @@ class Passive_Poison(Passive):
             message(self.owner.name.capitalize()+" gets hit for "+str(self.dmg)+" by the poison.", libtcod.darker_green)
         elif self.current_turns == self.turns:
             message("The poison has subsided", libtcod.darker_green)
+            self.terminate = True
+            self.current_turns += 1
+
+class Passive_Stun(Passive):
+    def __init__(self, nb_turns, owner):
+        self.turns = nb_turns
+        self.current_turns = 0
+        self.passive_name = "stunned"
+        self.owner = owner
+        self.terminate = False
+    
+    def do_passive(self):
+        if self.current_turns < self.turns:
+            self.current_turns += 1
+            self.owner.fighter.can_move = False
+            message(self.owner.name.capitalize()+" is still unable to move.", libtcod.darker_green)
+        elif self.current_turns == self.turns:
+            message("You can move again", libtcod.darker_green)
+            self.owner.fighter.can_move = True
+            self.terminate = True
             self.current_turns += 1
 
 
@@ -814,7 +921,7 @@ def create_v_tunnel(y1, y2, x):
         map[x][y].block_sight = False
  
 def make_map():
-    global map, objects, stairs, stair_x, stair_y, merchant
+    global map, objects, stairs, stair_x, stair_y, merchant, final_boss_state
  
     #the list of objects with just the player
     objects = [player]
@@ -892,13 +999,6 @@ def make_map():
     #Clear the bossroom before creating the boss
     clear_room(rooms[-1])
     
-    ##BOSS GOES HERE##
-    fighter_component = Fighter(hp=30, defense=3, power=8, xp=150, death_function=boss_death)
-    ai_component = BasicMonster()
-    boss = Object(new_x, new_y, 'O', 'The Gatekeeper', libtcod.desaturated_green,
-                  blocks=True, fighter=fighter_component, ai=ai_component)
-    objects.append(boss)
-    
     ##CREATE MERCHANT
     create_merchant = True #Add conditions here
     if create_merchant:
@@ -913,12 +1013,20 @@ def make_map():
         merchant = Object(merch_x, merch_y, '@', 'merchant', libtcod.gold, always_visible=True, blocks=True)
         objects.append(merchant)
     
-#     ##CREATE CHEST
-#     chest_item_item_component = Item()
-#     chest_item = Object(0, 0, 'I', 'item', libtcod.gold, always_visible=True, item=chest_item_item_component)
-#     chest_component = Chest([chest_item, chest_item.clone()])
-#     chest = Object(rooms[0].center()[0]+1, rooms[0].center()[1], 'D', 'Chest', libtcod.purple, blocks=True, always_visible=True, chest=chest_component)
-#     objects.append(chest)
+    ##BOSS GOES HERE##
+    if dungeon_level >= FINAL_FLOOR_LEVEL: #Final floor reached, place final boss
+        fighter_component = Fighter(hp=100, defense=5, power=10, xp=0, death_function=final_boss_death)
+        ai_component = LisanneAI()
+        final_boss = Object(new_x, new_y, 'L', 'Lisanne', libtcod.red,
+                      blocks=True, fighter=fighter_component, ai=ai_component)
+        objects.append(final_boss)
+        final_boss_state = 0
+    else:
+        fighter_component = Fighter(hp=30, defense=3, power=8, xp=150, death_function=boss_death)
+        ai_component = BasicMonster()
+        boss = Object(new_x, new_y, 'O', 'The Gatekeeper', libtcod.desaturated_green,
+                      blocks=True, fighter=fighter_component, ai=ai_component)
+        objects.append(boss)
  
 def random_choice_index(chances):  #choose one option from list of chances, returning its index
     #the dice will land on some number between 1 and the sum of the chances
@@ -957,7 +1065,7 @@ def place_objects(room):
  
     #chance of each monster
     monster_chances = {}
-    monster_chances['orc'] = 8000  #orc always shows up, even if all other monsters have 0 chance
+    monster_chances['orc'] = 80  #orc always shows up, even if all other monsters have 0 chance
     monster_chances['archer'] = 10
     monster_chances['troll'] = from_dungeon_level([[15, 3], [30, 5], [60, 7]])
  
@@ -968,7 +1076,7 @@ def place_objects(room):
     item_chances = {}
     
     #Traps
-    item_chances['poison_trap'] = 8000
+    item_chances['poison_trap'] = 10
     
     #Potions
     item_chances['heal'] = 35  #healing potion always shows up, even if all other items have 0 chance
@@ -1270,7 +1378,7 @@ def message(new_msg, color = libtcod.white):
  
 def player_move_or_attack(dx, dy):
     global fov_recompute
- 
+    
     #the coordinates the player is moving to/attacking
     x = player.x + dx
     y = player.y + dy
@@ -1284,17 +1392,19 @@ def player_move_or_attack(dx, dy):
  
     #attack if target found, move otherwise
     if target is not None:
-        player.fighter.attack(target)
         player.fighter.do_passives()
+        if not player.fighter.can_move:
+            return True
+        player.fighter.attack(target)
         return True
     elif not is_blocked(x,y):
+        player.fighter.do_passives()
         player.move(dx, dy)
         #Finding money or other to pickup
         for object in objects:
             if object.name == 'money' and object.x==player.x and object.y==player.y:
                 object.item.pick_up()
         fov_recompute = True
-        player.fighter.do_passives()
         return True
     elif (x, y) == (merchant.x, merchant.y):
         message(String.npc_bump())
@@ -1804,6 +1914,21 @@ def boss_death(boss):
     stairs = Object(stair_x, stair_y, '<', 'stairs', libtcod.white, always_visible=True)
     objects.append(stairs)
     stairs.send_to_back()  #so it's drawn below the monsters
+    
+def final_boss_death(final_boss):
+    global game_state
+    #transform it into a nasty corpse! it doesn't block, can't be
+    #attacked and doesn't move
+    message(final_boss.name + ' is dead! A WINNER IS YOU!!', libtcod.orange)
+    final_boss.char = '%'
+    final_boss.color = libtcod.dark_red
+    final_boss.blocks = False
+    final_boss.fighter = None
+    final_boss.ai = None
+    final_boss.name = 'remains of ' + final_boss.name
+    final_boss.send_to_back()
+    #Set gamestate to dead, because you won and still want all the stat-viewing goodness
+    game_state = 'dead'
  
 def target_tile(max_range=None):
     global key, mouse
@@ -2183,6 +2308,9 @@ def new_game():
     player = Object(0, 0, '@', player_name, libtcod.white, blocks=True, fighter=fighter_component)
 
     player.level = 1
+    
+    effect = Passive_Stun(2, player)
+    player.fighter.add_passive(effect)
  
     #generate map (at this point it's not drawn to the screen)
     dungeon_level = 1
@@ -2335,5 +2463,31 @@ def Start():
     panel = libtcod.console_new(SCREEN_WIDTH, PANEL_HEIGHT)
      
     main_menu()
+
+class String:
+    
+    @staticmethod
+    def title_string():
+        TITLE_STRINGS=['Robins grosse abenteuer', 'Caution, small pieces. Keep away from children'] # Strings for window title #Terraria
+        index = random.randint(0, len(TITLE_STRINGS)-1)
+        return TITLE_STRINGS[index]
+    
+    @staticmethod
+    def heal_string():
+        HEAL_STRINGS=['schel hesp', 'schel kaas', 'smartie', 'ui', 'ajuin', 'brioche'] # Names for healing items
+        index = random.randint(0, len(HEAL_STRINGS)-1)
+        return HEAL_STRINGS[index]
+    
+    @staticmethod
+    def npc_bump():
+        NPC_BUMP_STRINGS=['Dude, watch it!', 'bump!', 'bamp', 'bumpity', 'ouch!'] # When bumping against npc
+        index = random.randint(0, len(NPC_BUMP_STRINGS)-1)
+        return NPC_BUMP_STRINGS[index]
+    
+    @staticmethod
+    def wall_bump():
+        WALL_BUMP_STRINGS=['Wall, watch it!', 'bump!', 'bamp', 'bumpity', 'ouch!', 'You found a hidden path, but you decided to ignore it.'] # When bumping against wall
+        index = random.randint(0, len(WALL_BUMP_STRINGS)-1)
+        return WALL_BUMP_STRINGS[index]
 
 Start()
