@@ -387,9 +387,11 @@ class Fighter:
             self.passives.append(effect)
     
     def clone(self):
-        return Fighter(self.hp, self.defense, self.power, self.xp, self.money_amount,
+        out = Fighter(self.hp, self.defense, self.power, self.xp, self.money_amount,
                        self.mp, self.dodge, self.crit_chance, self.crit_dmg, self.death_function,
-                       self.player_class, [passive.clone() for passive in self.passives])
+                       self.player_class)
+        out.passives = [passive.clone() for passive in self.passives]
+        return out
             
 class BasicMonster:
     #AI for a basic monster.
@@ -956,8 +958,9 @@ def make_map():
             #"paint" it to the map's tiles
             create_room(new_room)
  
-            #add some contents to this room, such as monsters
-            place_objects(new_room)
+            #add some contents to this room, such as monsters. Leave empty if it's the first room.
+            if num_rooms > 0:
+                place_objects(new_room)
  
             #center coordinates of new room, will be useful later
             (new_x, new_y) = new_room.center()
@@ -1062,6 +1065,20 @@ def place_objects(room):
  
     #maximum number of monsters per room
     max_monsters = from_dungeon_level([[2, 1], [3, 4], [5, 6]])
+    
+    #If fucked:
+    if player.fighter.player_class == 'gepeepene':
+        num_monsters = libtcod.random_get_int(0, 0, max_monsters)
+        for i in range(num_monsters):
+            #choose random spot for this monster
+            x = libtcod.random_get_int(0, room.x1+1, room.x2-1)
+            y = libtcod.random_get_int(0, room.y1+1, room.y2-1)
+            fighter_component = Fighter(hp=100, defense=0, power=100, xp=0, money_amount=0, death_function=monster_death)
+            ai_component = BasicMonster()
+            target = Object(x, y, 'O', 'pavo', libtcod.darker_sky, blocks=True, fighter=fighter_component, ai=ai_component)
+            objects.append(target)
+        return
+        
  
     #chance of each monster
     monster_chances = {}
@@ -2042,6 +2059,9 @@ def cast_confuse():
 def magic_missile():
     return cast_strike(20)
 
+def meteor():
+    return cast_strike(1000)
+
 def cast_strike(damage):
     #ask the player for a target to strike
     message('Left-click an enemy to hit it, or right-click to cancel.', libtcod.light_cyan)
@@ -2136,7 +2156,7 @@ def load_game():
     initialize_fov()
  
 def new_game():
-    global player, inventory, spellbook, catalog, game_msgs, game_state, dungeon_level
+    global player, inventory, spellbook, catalog, game_msgs, game_state, dungeon_level, FINAL_FLOOR_LEVEL
     
     img = libtcod.image_load('menu_background.png')
     
@@ -2292,6 +2312,9 @@ def new_game():
         obj = Object(0, 0, '|', 'telescoop', libtcod.sky, always_visible = True, equipment=equipment_component)
         inventory.append(obj)
         class_inventory.append(obj)
+        spell_component = Spell(meteor, 1000, "You command the powers of the universe.")
+        spell = Object(0, 0, 'B', 'Meteor', libtcod.sky, always_visible = True, spell=spell_component)
+        class_spells.append(spell)
         class_hp = 10
         class_defense = 0
         class_power = 0
@@ -2300,6 +2323,7 @@ def new_game():
         class_crit_chance = 0
         class_crit_dmg = 100
         player_class_name='gepeepene'
+        FINAL_FLOOR_LEVEL=1
     
     #create object representing the player
     fighter_component = Fighter(hp=class_hp, defense=class_defense, power=class_power, xp=0, mp=class_mp, dodge=class_dodge,
@@ -2308,9 +2332,6 @@ def new_game():
     player = Object(0, 0, '@', player_name, libtcod.white, blocks=True, fighter=fighter_component)
 
     player.level = 1
-    
-    effect = Passive_Stun(2, player)
-    player.fighter.add_passive(effect)
  
     #generate map (at this point it's not drawn to the screen)
     dungeon_level = 1
