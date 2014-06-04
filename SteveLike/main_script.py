@@ -1,10 +1,13 @@
-# Robin's great adventure.
+#####################################################################################
+#                                                        # Robin's great adventure. #
+#                                                        ############################
+#
 # A game by Xenoxinius (Idea, humor and such) & Melinator95 (programming, keeping it real and do-able)
 #
 # Made possible with the roguelike tutorial on roguebasin by Jotaf
 # Many thanks and praises to you good sir!
-
-#test
+#
+# Also, the picture on the title screen is ripped from the tutorial. Credit to those who own/made it.
 
 import libtcodpy as libtcod
 import math
@@ -55,7 +58,7 @@ FOV_ALGO = 0  #default FOV algorithm
 FOV_LIGHT_WALLS = True  #light walls or not
 TORCH_RADIUS = 10
  
-LIMIT_FPS = 10  #10 frames-per-second maximum
+LIMIT_FPS = 10  #10 frames-per-second maximum. Used for key held, mostly. But also refresh rate of objects under mouse.
 
 PLAYER_NAMES = ['Robin', 'Crowbin', 'Ronifst', 'Clemens']
 CLASSES = ['Super Saiyan 3', 'Toverknol', 'Pikkendief', 'Paardenridder', 'Boogschutter', 'Sterrenkundige']
@@ -71,7 +74,7 @@ stair_x = -1
 stair_y = -1
 
 #The number of the final floor.
-FINAL_FLOOR_LEVEL=7
+FINAL_FLOOR_LEVEL=7 #Also edit final_boss_death()
  
 class Tile:
     #a tile of the map and its properties
@@ -246,6 +249,9 @@ class Object:
         fighter = None
         if self.fighter:
             fighter = self.fighter.clone()
+        ai=None
+        if self.ai:
+            ai = self.ai.clone()
         item = None
         if self.item:
             item = self.item.clone()
@@ -262,7 +268,7 @@ class Object:
         if self.chest:
             chest = self.chest.clone()
         return Object(self.x, self.y, self.char, self.name, self.color, self.blocks, self.always_visible,
-                 fighter, self.ai, item, equipment, spell, stackable,
+                 fighter, ai, item, equipment, spell, stackable,
                  chest)
  
 class Fighter:
@@ -407,6 +413,9 @@ class BasicMonster:
             #close enough, attack! (if the player is still alive.)
             elif player.fighter.hp > 0:
                 monster.fighter.attack(player)
+    
+    def clone(self):
+        return BasicMonster()
  
 class ConfusedMonster:
     #AI for a temporarily confused monster (reverts to previous AI after a while).
@@ -423,6 +432,9 @@ class ConfusedMonster:
         else:  #restore the previous AI (this one will be deleted because it's not referenced anymore)
             self.owner.ai = self.old_ai
             message('The ' + self.owner.name + ' is no longer confused!', libtcod.red)
+    
+    def clone(self):
+        return ConfusedMonster(self.old_ai.clone(), self.num_turns)
 
 class IdleMonster:
     #AI for a temporary idle monster (blinded, while in stealth, ...)
@@ -438,6 +450,9 @@ class IdleMonster:
         else:  #restore the previous AI (this one will be deleted because it's not referenced anymore)
             self.owner.ai = self.old_ai
             message('The ' + self.owner.name + ' is no longer unaware of your presence!', libtcod.red)
+    
+    def clone(self):
+        return IdleMonster(self.old_ai.clone(), self.num_turns)
 
 class RangedMonster:
     #Ai for ranged monster
@@ -462,6 +477,9 @@ class RangedMonster:
             #close enough, attack! (if the player is still alive.)
             elif player.fighter.hp > 0:
                 monster.fighter.attack(player)
+    
+    def clone(self):
+        return RangedMonster(self.range)
 
 class LisanneAI:
     #AI for lisanne
@@ -520,6 +538,9 @@ class LisanneAI:
             else: #ERROR
                 message("Lisanne is confused, she forgets who she is. Exiting game because fuck your victory.")
                 assert (0 <= final_boss_state <= 1)
+    
+    def clone(self):
+        return LisanneAI()
 
  
 class Item:
@@ -856,6 +877,26 @@ class Passive_Stun(Passive):
             self.owner.fighter.can_move = True
             self.terminate = True
             self.current_turns += 1
+            
+class Mana_Regen(Passive):
+    def __init__(self, amount, owner):
+        self.amount = amount
+        self.passive_name = "regenerating mana"
+        self.owner = owner
+        self.terminate = False
+        
+    def do_passive(self):
+        self.owner.fighter.restore(self.amount)
+
+class Health_Regen(Passive):
+    def __init__(self, amount, owner):
+        self.amount = amount
+        self.passive_name = "regenerating health"
+        self.owner = owner
+        self.terminate = False
+        
+    def do_passive(self):
+        self.owner.fighter.heal(self.amount)
 
 
 def create_money(amount, x=0, y=0):
@@ -1621,7 +1662,7 @@ def handle_keys():
             #test for other keys
             key_char = chr(key.c)
 
-            if key_char == 'g':
+            if key_char == 'g' and player.fighter.can_move:
                 #pick up an item
                 for thing in objects:  #look for an item in the player's tile
                     if thing.x == player.x and thing.y == player.y and (thing.item or thing.spell):
@@ -1633,19 +1674,23 @@ def handle_keys():
 
             if key_char == 'i':
                 #show the inventory; if an item is selected, use it
-                chosen_item = inventory_menu('Press the key next to an item to use it, or any other to cancel.\n')
-                if chosen_item is not None:
-                    chosen_item.item.use()
+                if player.fighter.can_move:
+                    chosen_item = inventory_menu('Press the key next to an item to use it, or any other to cancel.\n')
+                    if chosen_item is not None:
+                        chosen_item.item.use()
+                else:
+                    inventory_menu("Petrified, remember? But you can still look.\n")
 
-            if key_char == 's':
+            if key_char == 's' and player.fighter.can_move:
                 #show the spellbook; if a spell is selected, cast it
                 chosen_item = spellbook_menu('Press the key next to an item to use it, or any other to cancel.\n')
                 if chosen_item is not None:
                     if chosen_item.use():
+                        player.fighter.do_passives()
                         render_all()
                         return
 
-            if key_char == 'd':
+            if key_char == 'd' and player.fighter.can_move:
                 #show the inventory; if an item is selected, drop it
                 chosen_item = inventory_menu('Press the key next to an item to drop it, or any other to cancel.\n')
                 if chosen_item is not None:
@@ -1661,7 +1706,7 @@ def handle_keys():
                        ')\nDodge chance: ' + str(player.fighter.dodge) + ' (' + str(player.fighter.dodge) + ')'
                        , CHARACTER_SCREEN_WIDTH)
 
-            if key_char == '<':
+            if key_char == '<' and player.fighter.can_move:
                 #go down stairs, if the player is on them
                 if stairs.x == player.x and stairs.y == player.y:
                     next_level()
@@ -1681,7 +1726,7 @@ def handle_keys():
                 if stairs.x == player.x and stairs.y == player.y:
                     next_level()
 
-            if key_char == 'k': #Kopen
+            if key_char == 'k' and player.fighter.can_move: #Kopen
                 #Check if near shop and buy things
                 if (-1 <= player.x-merchant.x <= 1) and (-1 <= player.y-merchant.y <= 1):
                     chosen_item = shop_menu('Welcome to my humble shop...')
@@ -1697,7 +1742,7 @@ def handle_keys():
                         message('The merchant threw the ' + chosen_item.name + ' at your feet.', libtcod.gold)
                         chosen_item.item.pick_up()
 
-            if key_char == 'v': #Verkopen
+            if key_char == 'v' and player.fighter.can_move: #Verkopen
                 #Check if near shop and sell things
                 if (-1 <= player.x-merchant.x <= 1) and (-1 <= player.y-merchant.y <= 1):
                     chosen_item = shop_sell_menu('Select an item to sell.')
@@ -1755,12 +1800,13 @@ def handle_ranged_keys():
                     (player.distance(x, y) <= get_bow().equipment.range)):
             if not shoot(x,y): #Shoot @ target tile w/ equipped arrows through equipped ranged weapon
                 return 'didnt-take-turn'
+            else: player.fighter.do_passives()
         
         else:
             #Check for keys that don't take turns
             key_char = chr(key.c)
             
-            if key_char == 'g':
+            if key_char == 'g' and player.fighter.can_move:
                 #pick up an item
                 for thing in objects:  #look for an item in the player's tile
                     if thing.x == player.x and thing.y == player.y and (thing.item or thing.spell):
@@ -1772,19 +1818,23 @@ def handle_ranged_keys():
         
             if key_char == 'i':
                 #show the inventory; if an item is selected, use it
-                chosen_item = inventory_menu('Press the key next to an item to use it, or any other to cancel.\n')
-                if chosen_item is not None:
-                    chosen_item.item.use()
+                if player.fighter.can_move:
+                    chosen_item = inventory_menu('Press the key next to an item to use it, or any other to cancel.\n')
+                    if chosen_item is not None:
+                        chosen_item.item.use()
+                else:
+                    inventory_menu("Petrified, remember? But you can still look.\n")
             
-            if key_char == 's':
+            if key_char == 's' and player.fighter.can_move:
                 #show the spellbook; if a spell is selected, cast it
                 chosen_item = spellbook_menu('Press the key next to an item to use it, or any other to cancel.\n')
                 if chosen_item is not None:
                     if chosen_item.use():
+                        player.fighter.do_passives()
                         render_all()
                         return
         
-            if key_char == 'd':
+            if key_char == 'd' and player.fighter.can_move:
                 #show the inventory; if an item is selected, drop it
                 chosen_item = inventory_menu('Press the key next to an item to drop it, or any other to cancel.\n')
                 if chosen_item is not None:
@@ -1800,12 +1850,12 @@ def handle_ranged_keys():
                        ')\nDodge chance: ' + str(player.fighter.dodge) + ' (' + str(player.fighter.dodge) + ')'
                        , CHARACTER_SCREEN_WIDTH)
         
-            if key_char == '<':
+            if key_char == '<' and player.fighter.can_move:
                 #go down stairs, if the player is on them
                 if stairs.x == player.x and stairs.y == player.y:
                     next_level()
         
-            if key.vk == libtcod.KEY_KP0:
+            if key.vk == libtcod.KEY_KP0 and player.fighter.can_move:
                 #Do all the things (pickup items/go down stairs)
                 
                 #pick up an item
@@ -1820,7 +1870,7 @@ def handle_ranged_keys():
                 if stairs.x == player.x and stairs.y == player.y:
                     next_level()
         
-            if key_char == 'k': #Kopen
+            if key_char == 'k' and player.fighter.can_move: #Kopen
                 #Check if near shop and buy things
                 if (-1 <= player.x-merchant.x <= 1) and (-1 <= player.y-merchant.y <= 1):
                     chosen_item = shop_menu('Welcome to my humble shop...')
@@ -1836,7 +1886,7 @@ def handle_ranged_keys():
                         message('The merchant threw the ' + chosen_item.name + ' at your feet.', libtcod.gold)
                         chosen_item.item.pick_up()
         
-            if key_char == 'v': #Verkopen
+            if key_char == 'v' and player.fighter.can_move: #Verkopen
                 #Check if near shop and sell things
                 if (-1 <= player.x-merchant.x <= 1) and (-1 <= player.y-merchant.y <= 1):
                     chosen_item = shop_sell_menu('Select an item to sell.')
@@ -1933,7 +1983,7 @@ def boss_death(boss):
     stairs.send_to_back()  #so it's drawn below the monsters
     
 def final_boss_death(final_boss):
-    global game_state
+    global game_state, FINAL_FLOOR_LEVEL
     #transform it into a nasty corpse! it doesn't block, can't be
     #attacked and doesn't move
     message(final_boss.name + ' is dead! A WINNER IS YOU!!', libtcod.orange)
@@ -1946,6 +1996,7 @@ def final_boss_death(final_boss):
     final_boss.send_to_back()
     #Set gamestate to dead, because you won and still want all the stat-viewing goodness
     game_state = 'dead'
+    FINAL_FLOOR_LEVEL = 7 #Just in case
  
 def target_tile(max_range=None):
     global key, mouse
@@ -2072,6 +2123,9 @@ def cast_strike(damage):
     monster.fighter.take_damage(damage)
 
 def shoot(x, y):
+    if not player.fighter.can_move:
+        return True
+    
     weapon = get_bow()
     if weapon == None or (not weapon.equipment) or (not weapon.equipment.kind == 'ranged'):
         #You shouldn't get here
@@ -2185,6 +2239,7 @@ def new_game():
     #init class specific traits/equipment
     class_inventory = []
     class_spells = []
+    class_passives = []
     class_hp = None
     class_defense = None
     class_power = None
@@ -2194,8 +2249,6 @@ def new_game():
     class_crit_dmg = None
 
     if class_choice == 0: #Goku
-        class_inventory = []
-        class_spells = []
         item_component = Item(shop_cost=500)
         equipment_component1 = Equipment(slot='right hand', power_bonus=3)
         obj1 = Object(0, 0, 'P', "'djoef op uw mulle'-hamer", libtcod.sky, equipment=equipment_component1, item=item_component)
@@ -2215,13 +2268,11 @@ def new_game():
         player_class_name='Super Saiyan 3'
     
     elif class_choice == 1: #Toverknol
-        class_inventory = []
-        class_spells = []
-        equipment_component1 = Equipment(slot='right hand', kind='ranged', type=['mana', 20], ranged_damage=20)
+        equipment_component1 = Equipment(slot='left hand', kind='ranged', type=['mana', 20], ranged_damage=20)
         obj1 = Object(0, 0, '?', 'wand of knalboom', libtcod.sky, always_visible = True, equipment=equipment_component1)
         equipment_component2 = Equipment(slot='torso', max_hp_bonus=20)
         obj2 = Object(0, 0, 'V', 'maagdelijk witte tuniek', libtcod.white, always_visible = True, equipment=equipment_component2)
-        equipment_component3 = Equipment(slot='left hand', kind='melee', power_bonus=2, max_mp_bonus=20)
+        equipment_component3 = Equipment(slot='right hand', kind='melee', power_bonus=2, max_mp_bonus=20)
         obj3 = Object(0, 0, 'j', 'knollenstok', libtcod.sky, always_visible = True, equipment=equipment_component3)
         inventory.append(obj1)
         class_inventory.append(obj1)
@@ -2229,6 +2280,8 @@ def new_game():
         class_inventory.append(obj2)
         inventory.append(obj3)
         class_inventory.append(obj3)
+        passive1 = Mana_Regen(1, None)
+        class_passives.append(passive1)
         class_hp = 80
         class_defense = 1
         class_power = 2
@@ -2239,8 +2292,6 @@ def new_game():
         player_class_name='toverknol'
     
     elif class_choice == 2: #Pikkendief
-        class_inventory = []
-        class_spells = []
         equipment_component1 = Equipment(slot='right hand', power_bonus=1)
         obj1 = Object(0, 0, '-', 'roestig mes', libtcod.copper, always_visible = True, equipment=equipment_component1)
         inventory.append(obj1)
@@ -2259,8 +2310,6 @@ def new_game():
         player_class_name='pikkendief'
     
     elif class_choice == 3: #Paardenridder
-        class_inventory = []
-        class_spells = []
         equipment_component1 = Equipment(slot='right hand', power_bonus=1)
         obj1 = Object(0, 0, '|', 'spies', libtcod.sky, always_visible = True, equipment=equipment_component1)
         inventory.append(obj1)
@@ -2279,8 +2328,6 @@ def new_game():
         player_class_name='paardenridder'
     
     elif class_choice == 4: #Boogschutter
-        class_inventory = []
-        class_spells = []
         equipment_component1 = Equipment(slot='right hand', power_bonus=1)
         obj1 = Object(0, 0, '-', 'scherp mes', libtcod.copper, always_visible = True, equipment=equipment_component1)
         equipment_component2 = Equipment(slot='head', dodge_bonus=3)
@@ -2306,8 +2353,6 @@ def new_game():
         player_class_name='boogschutter'
     
     elif class_choice == 5: #Sterrenkundige, ooooh... Bad choice
-        class_inventory = []
-        class_spells = []
         equipment_component = Equipment(slot='both hands')
         obj = Object(0, 0, '|', 'telescoop', libtcod.sky, always_visible = True, equipment=equipment_component)
         inventory.append(obj)
@@ -2354,6 +2399,10 @@ def new_game():
     
     for spell in class_spells:
         spellbook.append(spell)
+        
+    for passive in class_passives:
+        passive.owner = player
+    player.fighter.passives = class_passives
 
 # Return a list of items to sell at the shop, dependant on current floor and chance.
 # Possible also player level, ...
